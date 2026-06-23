@@ -11,7 +11,7 @@ def main():
     AUM_0 = 100000.0
     commission = 0.0035
     min_comm_per_order = 0.35
-    band_mult = 1.1
+    band_mult = 1
     band_simplified = 0
     trade_freq = 30
     sizing_type = "vol_target"
@@ -48,75 +48,96 @@ def main():
         current_day = all_days[d]
         prev_day = all_days[d-1]
         
-        if prev_day in daily_groups.groups and current_day in daily_groups.groups:
-            prev_day_data = daily_groups.get_group(prev_day)
-            current_day_data = daily_groups.get_group(current_day)
+        prev_day_data = daily_groups.get_group(prev_day)
+        current_day_data = daily_groups.get_group(current_day)
 
-            if 'sigma_open' in current_day_data.columns and current_day_data['sigma_open'].isna().all():
-                continue
+        if 'sigma_open' in current_day_data.columns and current_day_data['sigma_open'].isna().all():
+            continue
 
-            prev_close_adjusted = prev_day_data['close'].iloc[-1] - df.loc[current_day_data.index, 'dividend'].iloc[-1]
+        prev_close_adjusted = prev_day_data['close'].iloc[-1] - df.loc[current_day_data.index, 'dividend'].iloc[-1]
 
-            open_price = current_day_data['open'].iloc[0]
-            current_close_prices = current_day_data['close']
-            spx_vol = current_day_data['spy_dvol'].iloc[0]
-            vwap = current_day_data['vwap']
+        open_price = current_day_data['open'].iloc[0]
+        current_close_prices = current_day_data['close']
+        spx_vol = current_day_data['spy_dvol'].iloc[0]
+        vwap = current_day_data['vwap']
 
-            sigma_open = current_day_data['sigma_open']
-            UB = max(open_price, prev_close_adjusted) * (1 + band_mult * sigma_open)
-            LB = min(open_price, prev_close_adjusted) * (1 - band_mult * sigma_open)
+        sigma_open = current_day_data['sigma_open']
+        UB = max(open_price, prev_close_adjusted) * (1 + band_mult * sigma_open)
+        LB = min(open_price, prev_close_adjusted) * (1 - band_mult * sigma_open)
 
-            # Determine trading signals
-            signals = np.zeros_like(current_close_prices)
-            signals[(current_close_prices > UB) & (current_close_prices > vwap)] = 1
-            signals[(current_close_prices < LB) & (current_close_prices < vwap)] = -1
+        # Determine trading signals
+        signals = np.zeros_like(current_close_prices)
+        signals[(current_close_prices > UB) & (current_close_prices > vwap)] = 1
+        signals[(current_close_prices < LB) & (current_close_prices < vwap)] = -1
 
 
-            # Position sizing
-            previous_aum = strat.loc[prev_day, 'AUM']
+        
 
-            if sizing_type == "vol_target":
-                if math.isnan(spx_vol):
-                    shares = round(previous_aum / open_price * max_leverage)
-                else:
-                    shares = round(previous_aum / open_price * min(target_vol / spx_vol, max_leverage))
+        # Position sizing
+        previous_aum = strat.loc[prev_day, 'AUM']
 
-            elif sizing_type == "full_notional":
-                shares = round(previous_aum / open_price)
+        if sizing_type == "vol_target":
+            if math.isnan(spx_vol):
+                shares = round(previous_aum / open_price * max_leverage)
+            else:
+                shares = round(previous_aum / open_price * min(target_vol / spx_vol, max_leverage))
 
-            # Apply trading signals at trade frequencies
-            trade_indices = np.where(current_day_data["min_from_open"] % trade_freq == 0)[0]
-            exposure = np.full(len(current_day_data), np.nan)  # Start with NaNs
-            exposure[trade_indices] = signals[trade_indices]  # Apply signals at trade times
+        elif sizing_type == "full_notional":
+            shares = round(previous_aum / open_price)
 
-            # Custom forward-fill that stops at zeros
-            last_valid = np.nan  # Initialize last valid value as NaN
-            filled_values = []  # List to hold the forward-filled values
-            for value in exposure:
-                if not np.isnan(value):  # If current value is not NaN, update last valid value
-                    last_valid = value
-                if last_valid == 0:  # Reset if last valid value is zero
-                    last_valid = np.nan
-                filled_values.append(last_valid)
+        # Apply trading signals at trade frequencies
+        trade_indices = np.where(current_day_data["min_from_open"] % trade_freq == 0)[0]
+        exposure = np.full(len(current_day_data), np.nan)  # Start with NaNs
+        exposure[trade_indices] = signals[trade_indices]  # Apply signals at trade times
 
-            exposure = pd.Series(filled_values, index=current_day_data.index).shift(1).fillna(0).values  # Apply shift and fill NaNs
+        if d == 200:
+            print(exposure)
+            mins = current_day_data["min_from_open"].values
+            fig, ax = plt.subplots(figsize=(12, 5))
+            ax.plot(mins, current_close_prices.values, label='Close', color='steelblue', linewidth=1.5)
+            ax.plot(mins, UB.values, label='UB', color='green', linestyle='--', linewidth=1)
+            ax.plot(mins, LB.values, label='LB', color='red', linestyle='--', linewidth=1)
+            for x in range(30, len(current_day_data), 30):
+                ax.axvline(x=x, color='gray', linestyle=':', linewidth=1.2)
+            ax.set_title(f'Day {current_day} — Close, UB, LB')
+            ax.set_xlabel('Minutes from Open')
+            ax.set_ylabel('Price ($)')
+            ax.legend()
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.show()
 
-            # Calculate trades count based on changes in exposure
-            trades_count = np.sum(np.abs(np.diff(np.append(exposure, 0))))
+        # Custom forward-fill that stops at zeros
+        last_valid = np.nan  # Initialize last valid value as NaN
+        filled_values = []  # List to hold the forward-filled values
+        for value in exposure:
+            if not np.isnan(value):  # If current value is not NaN, update last valid value
+                last_valid = value
+            if last_valid == 0:  # Reset if last valid value is zero
+                last_valid = np.nan
+            filled_values.append(last_valid)
 
-            # Calculate PnL
-            change_1m = current_close_prices.diff()
-            gross_pnl = np.sum(exposure * change_1m) * shares
-            commission_paid = trades_count * max(min_comm_per_order, commission * shares)
-            net_pnl = gross_pnl - commission_paid
+        exposure = pd.Series(filled_values, index=current_day_data.index).shift(1).fillna(0).values  # Apply shift and fill NaNs
 
-            # Update the daily return and new AUM
-            strat.loc[current_day, 'AUM'] = previous_aum + net_pnl
-            strat.loc[current_day, 'ret'] = net_pnl / previous_aum
+        if d == 200:
+            print(exposure)
 
-            # Save the passive Buy&Hold daily return for SPY
-            strat.loc[current_day, 'ret_spy'] = df_daily.loc[df_daily.index == current_day, 'ret'].values[0]
-            
+        # Calculate trades count based on changes in exposure
+        trades_count = np.sum(np.abs(np.diff(np.append(exposure, 0))))
+
+        # Calculate PnL
+        change_1m = current_close_prices.diff()
+        gross_pnl = np.sum(exposure * change_1m) * shares
+        commission_paid = trades_count * max(min_comm_per_order, commission * shares)
+        net_pnl = gross_pnl - commission_paid
+
+        # Update the daily return and new AUM
+        strat.loc[current_day, 'AUM'] = previous_aum + net_pnl
+        strat.loc[current_day, 'ret'] = net_pnl / previous_aum
+
+        # Save the passive Buy&Hold daily return for SPY
+        strat.loc[current_day, 'ret_spy'] = df_daily.loc[df_daily.index == current_day, 'ret'].values[0]
+        
 
     # Results
     final_aum=strat['AUM'].iloc[-1]
@@ -153,36 +174,36 @@ def main():
     # with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', None):
     #     print(f"day {day} tradelog:\n", tradelog)
 
-    # Equity curve
-    strat_aum   = strat['AUM']
-    spy_aum     = AUM_0 * (1 + strat['ret_spy'].fillna(0)).cumprod()
-    days        = strat.index
+    # # Equity curve
+    # strat_aum   = strat['AUM']
+    # spy_aum     = AUM_0 * (1 + strat['ret_spy'].fillna(0)).cumprod()
+    # days        = strat.index
 
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8),
-                                   gridspec_kw={'height_ratios': [3, 1]})
+    # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8),
+    #                                gridspec_kw={'height_ratios': [3, 1]})
 
-    ax1.plot(days, strat_aum.values, label='Strategy', color='steelblue', linewidth=1.5)
-    ax1.plot(days, spy_aum.values,   label='SPY Buy & Hold', color='darkorange',
-             linestyle='--', linewidth=1.5)
-    ax1.set_title('Equity Curve', fontsize=13)
-    ax1.set_ylabel('AUM ($)')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+    # ax1.plot(days, strat_aum.values, label='Strategy', color='steelblue', linewidth=1.5)
+    # ax1.plot(days, spy_aum.values,   label='SPY Buy & Hold', color='darkorange',
+    #          linestyle='--', linewidth=1.5)
+    # ax1.set_title('Equity Curve', fontsize=13)
+    # ax1.set_ylabel('AUM ($)')
+    # ax1.legend()
+    # ax1.grid(True, alpha=0.3)
+    # ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    # ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
 
-    colors = ['steelblue' if r >= 0 else 'tomato' for r in strat_rets.values]
-    ax2.bar(strat_rets.index, strat_rets.values, color=colors, width=1)
-    ax2.axhline(0, color='black', linewidth=0.7)
-    ax2.set_title('Daily Returns', fontsize=11)
-    ax2.set_ylabel('Return')
-    ax2.grid(True, alpha=0.3)
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+    # colors = ['steelblue' if r >= 0 else 'tomato' for r in strat_rets.values]
+    # ax2.bar(strat_rets.index, strat_rets.values, color=colors, width=1)
+    # ax2.axhline(0, color='black', linewidth=0.7)
+    # ax2.set_title('Daily Returns', fontsize=11)
+    # ax2.set_ylabel('Return')
+    # ax2.grid(True, alpha=0.3)
+    # ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    # ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
 
-    plt.tight_layout()
-    plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
-    plt.show()
+    # plt.tight_layout()
+    # plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
+    # plt.show()
 
 
 if __name__ == "__main__":

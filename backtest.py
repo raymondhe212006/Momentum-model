@@ -17,7 +17,7 @@ def main():
     sizing_type = "vol_target"
     target_vol = 0.02
     max_leverage = 4
-    day=20
+    day=200
 
     # Group data by day for faster access
     df = model()
@@ -65,10 +65,10 @@ def main():
         sigma_open = current_day_data['sigma_open']
         UB = max(open_price, prev_close_adjusted) * (1 + band_mult * sigma_open)
         LB = min(open_price, prev_close_adjusted) * (1 - band_mult * sigma_open)
+ 
 
         # Determine trading signals
         signals = np.zeros_like(current_close_prices) #empty array
-
         prev_signal=0
         for i, idx in enumerate(current_close_prices.index):
             price = current_close_prices.loc[idx]
@@ -96,7 +96,7 @@ def main():
             else:
                 signals[i] = prev_signal
 
-        # if d == 200:
+        # if d == day:
         #     print(signals)
         #     mins       = current_day_data['min_from_open'].values
         #     close_vals = current_close_prices.values
@@ -150,13 +150,18 @@ def main():
             #everyday use max leverage
             shares = round(previous_aum / open_price)
 
-
-
-        exposure = pd.Series(signals, index=current_day_data.index).shift(1).fillna(0).values  # Apply shift and fill NaNs
-        # We can only sell after computation of 30 min interval 
+        # Apply shift to avoid see ahead bias
+        exposure = pd.Series(signals, index=current_day_data.index).shift(1).fillna(0).values  
+        
+        # Always exit position at market close
+        exposure[-1]=0
 
         # Calculate trades count based on changes in exposure
-        trades_count = np.sum(np.abs(np.diff(np.append(exposure, 0))))
+        trades_count=0
+        for i in range(len(exposure)):
+            if i % trade_freq == 0:
+                if exposure[i] != exposure[i-1]:
+                    trades_count += 1
 
         # Calculate PnL
         change_1m = current_close_prices.diff()
@@ -205,40 +210,40 @@ def main():
     skew = strat_rets.skew()
     print(f"Skew:          {skew:.3f}")
 
-    # # Tradelog
-    # with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', None):
-    #     print(f"day {day} tradelog:\n", tradelog)
+    # Tradelog
+    with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', None):
+        print(f"day {day} tradelog:\n", tradelog)
 
-    # # Equity curve
-    # strat_aum   = strat['AUM']
-    # spy_aum     = AUM_0 * (1 + strat['ret_spy'].fillna(0)).cumprod()
-    # days        = strat.index
+    # Equity curve
+    strat_aum   = strat['AUM']
+    spy_aum     = AUM_0 * (1 + strat['ret_spy'].fillna(0)).cumprod()
+    days        = strat.index
 
-    # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8),
-    #                                gridspec_kw={'height_ratios': [3, 1]})
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8),
+                                   gridspec_kw={'height_ratios': [3, 1]})
 
-    # ax1.plot(days, strat_aum.values, label='Strategy', color='steelblue', linewidth=1.5)
-    # ax1.plot(days, spy_aum.values,   label='SPY Buy & Hold', color='darkorange',
-    #          linestyle='--', linewidth=1.5)
-    # ax1.set_title('Equity Curve', fontsize=13)
-    # ax1.set_ylabel('AUM ($)')
-    # ax1.legend()
-    # ax1.grid(True, alpha=0.3)
-    # ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    # ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+    ax1.plot(days, strat_aum.values, label='Strategy', color='steelblue', linewidth=1.5)
+    ax1.plot(days, spy_aum.values,   label='SPY Buy & Hold', color='darkorange',
+             linestyle='--', linewidth=1.5)
+    ax1.set_title('Equity Curve', fontsize=13)
+    ax1.set_ylabel('AUM ($)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
 
-    # colors = ['steelblue' if r >= 0 else 'tomato' for r in strat_rets.values]
-    # ax2.bar(strat_rets.index, strat_rets.values, color=colors, width=1)
-    # ax2.axhline(0, color='black', linewidth=0.7)
-    # ax2.set_title('Daily Returns', fontsize=11)
-    # ax2.set_ylabel('Return')
-    # ax2.grid(True, alpha=0.3)
-    # ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    # ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+    colors = ['steelblue' if r >= 0 else 'tomato' for r in strat_rets.values]
+    ax2.bar(strat_rets.index, strat_rets.values, color=colors, width=1)
+    ax2.axhline(0, color='black', linewidth=0.7)
+    ax2.set_title('Daily Returns', fontsize=11)
+    ax2.set_ylabel('Return')
+    ax2.grid(True, alpha=0.3)
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
 
-    # plt.tight_layout()
-    # plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
-    # plt.show()
+    plt.tight_layout()
+    plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
 
 if __name__ == "__main__":
