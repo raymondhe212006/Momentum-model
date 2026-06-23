@@ -11,13 +11,13 @@ def main():
     AUM_0 = 100000.0
     commission = 0.0035
     min_comm_per_order = 0.35
-    band_mult = 0.7
+    band_mult = 1
     band_simplified = 0
     trade_freq = 30
     sizing_type = "vol_target"
     target_vol = 0.02
     max_leverage = 4
-    day=200
+    day=359
 
     # Group data by day for faster access
     df = model()
@@ -42,7 +42,6 @@ def main():
     df_daily['ret'] = df_daily['close'].diff() / df_daily['close'].shift()
 
 
-    tradelog = pd.DataFrame()
     # Loop through all days, starting from the second day
     for d in range(1, len(all_days)):
         current_day = all_days[d]
@@ -57,7 +56,7 @@ def main():
         # correct dividend
         prev_close_adjusted = prev_day_data['close'].iloc[-1] - df.loc[current_day_data.index, 'dividend'].iloc[-1]
 
-        open_price = current_day_data['open'].iloc[0] #opening price so first entry
+        open_price = current_day_data['open'].iloc[0] # opening price so first entry
         current_close_prices = current_day_data['close']
         spx_vol = current_day_data['spy_dvol'].iloc[0] #same number every minute so pick first
         vwap = current_day_data['vwap']
@@ -76,16 +75,6 @@ def main():
             lb_val = LB.loc[idx]
             vwap_val = vwap.loc[idx]
             if i % trade_freq == 0:
-                if prev_signal != 0:
-                    if prev_signal == 1 and (price < ub_val or price < vwap_val):
-                        signals[i] = 0
-                        prev_signal = 0
-                    elif prev_signal == -1 and (price > lb_val or price > vwap_val):
-                        signals[i] = 0
-                        prev_signal = 0
-                    else:
-                        signals[i] = prev_signal
-                
                 if prev_signal == 0:
                     if price > ub_val:
                         signals[i] = 1
@@ -93,48 +82,24 @@ def main():
                     elif price < lb_val:
                         signals[i] = -1
                         prev_signal = -1
+                    else:
+                        signals[i]=0
+                elif prev_signal == 1 and (price < ub_val or price < vwap_val):
+                    signals[i] = 0
+                    prev_signal = 0
+                    if price < lb_val:
+                        signals[i] = -1
+                        prev_signal = -1
+                elif prev_signal == -1 and (price > lb_val or price > vwap_val):
+                    signals[i] = 0
+                    prev_signal = 0
+                    if price > ub_val:
+                        signals[i] = 1
+                        prev_signal = 1
+                else:
+                    signals[i] = prev_signal
             else:
                 signals[i] = prev_signal
-
-        # if d == day:
-        #     print(signals)
-        #     mins       = current_day_data['min_from_open'].values
-        #     close_vals = current_close_prices.values
-        #     ub_vals    = UB.values
-        #     lb_vals    = LB.values
-        #     vwap_vals  = vwap.values
-
-        #     fig, ax = plt.subplots(figsize=(15, 6))
-
-        #     ax.plot(mins, close_vals, label='Close', color='black',      linewidth=1.2)
-        #     ax.plot(mins, ub_vals,    label='UB',    color='green',       linewidth=0.9, linestyle='--')
-        #     ax.plot(mins, lb_vals,    label='LB',    color='red',         linewidth=0.9, linestyle='--')
-        #     ax.plot(mins, vwap_vals,  label='VWAP',  color='dodgerblue',  linewidth=0.9, linestyle=':')
-
-        #     # Shade held-position regions
-        #     ax.fill_between(mins, lb_vals.min() * 0.999, ub_vals.max() * 1.001,
-        #                     where=(signals == 1),  alpha=0.12, color='green', label='Long held')
-        #     ax.fill_between(mins, lb_vals.min() * 0.999, ub_vals.max() * 1.001,
-        #                     where=(signals == -1), alpha=0.12, color='red',   label='Short held')
-
-        #     # Entry / exit markers from transitions in signals
-        #     sig_diff = np.diff(signals, prepend=0)
-        #     entries_long  = mins[sig_diff == 1]
-        #     entries_short = mins[sig_diff == -1]
-        #     exits         = mins[(sig_diff != 0) & (signals == 0)]
-
-        #     ax.scatter(entries_long,  close_vals[sig_diff == 1],    marker='^', color='green', s=100, zorder=5, label='Long entry')
-        #     ax.scatter(entries_short, close_vals[sig_diff == -1],   marker='v', color='red',   s=100, zorder=5, label='Short entry')
-        #     ax.scatter(exits,         close_vals[(sig_diff != 0) & (signals == 0)],
-        #                marker='x', color='grey', s=80, zorder=5, label='Exit')
-
-        #     ax.set_title(f'Day {day}  ({current_day})')
-        #     ax.set_xlabel('Minutes from open')
-        #     ax.set_ylabel('Price ($)')
-        #     ax.legend(loc='upper left', fontsize=8)
-        #     ax.grid(True, alpha=0.3)
-        #     plt.tight_layout()
-        #     plt.show()
 
 
         # How much money from previous day
@@ -156,16 +121,73 @@ def main():
         # Always exit position at market close
         exposure[-1]=0
 
+        if d == day:
+            mins       = current_day_data["min_from_open"].values
+            close_vals = current_close_prices.values
+            fig, ax = plt.subplots(figsize=(12, 5))
+
+            # price lines
+            ax.plot(mins, close_vals,     label='Close', color='steelblue', linewidth=1.5)
+            ax.plot(mins, UB.values,      label='UB',    color='green',  linestyle='--', linewidth=1)
+            ax.plot(mins, LB.values,      label='LB',    color='red',    linestyle='--', linewidth=1)
+            ax.plot(mins, vwap.values,    label='VWAP',  color='orange', linestyle='-.',  linewidth=0.9)
+
+            # shade long / short holding periods
+            y_lo = min(LB.values.min(), close_vals.min()) * 0.999
+            y_hi = max(UB.values.max(), close_vals.max()) * 1.001
+            ax.fill_between(mins, y_lo, y_hi, where=(exposure == 1),  alpha=0.10, color='green', label='Long')
+            ax.fill_between(mins, y_lo, y_hi, where=(exposure == -1), alpha=0.10, color='red',   label='Short')
+
+            # entry / exit markers
+            exp_diff      = np.diff(exposure, prepend=0)
+            long_entries  = np.where((exp_diff != 0) & (exposure == 1))[0]
+            short_entries = np.where((exp_diff != 0) & (exposure == -1))[0]
+            exits         = np.where((exp_diff != 0) & (exposure == 0))[0]
+            if len(long_entries):
+                ax.scatter(mins[long_entries],  current_close_prices.iloc[long_entries],
+                           color='green', marker='^', s=100, zorder=5, label='Long entry')
+            if len(short_entries):
+                ax.scatter(mins[short_entries], current_close_prices.iloc[short_entries],
+                           color='red',   marker='v', s=100, zorder=5, label='Short entry')
+            if len(exits):
+                ax.scatter(mins[exits],         current_close_prices.iloc[exits],
+                           color='black', marker='x', s=80,  zorder=5, label='Exit')
+
+            # 30-min checkpoint verticals
+            for x in range(30, len(current_day_data), 30):
+                ax.axvline(x=x, color='gray', linestyle=':', linewidth=1.2)
+
+            ax.set_title(f'Day {current_day} — Close, UB, LB, VWAP')
+            ax.set_xlabel('Minutes from Open')
+            ax.set_ylabel('Price ($)')
+            ax.legend(fontsize=8)
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.show()
+
         # Calculate trades count based on changes in exposure
         trades_count=0
-        for i in range(len(exposure)):
+        for i in range(len(exposure)-1):
             if i % trade_freq == 0:
-                if exposure[i] != exposure[i-1]:
+                if exposure[i] != exposure[i+1]:
                     trades_count += 1
 
         # Calculate PnL
-        change_1m = current_close_prices.diff()
-        gross_pnl = np.sum(exposure * change_1m) * shares
+        prev_hold=0
+        enter=0
+        gross_pnl=0.0
+        for i in range(len(exposure)):
+            if exposure[i] != prev_hold:
+                if prev_hold != 0:
+                    #sigma open involves the close price of current min so we must take action next minute
+                    gross_pnl += (current_close_prices.iloc[i] - enter) * shares * prev_hold
+                if exposure[i]!=0:
+                    enter=current_close_prices.iloc[i]
+                else:
+                    enter=0
+                prev_hold = exposure[i]        
+        
+
         commission_paid = trades_count * max(min_comm_per_order, commission * shares)
         net_pnl = gross_pnl - commission_paid
 
@@ -176,9 +198,7 @@ def main():
         # Save the passive Buy&Hold daily return for SPY
         strat.loc[current_day, 'ret_spy'] = df_daily.loc[df_daily.index == current_day, 'ret'].values[0]
 
-        # Trade log
         
-
     # Results
     final_aum=strat['AUM'].iloc[-1]
     total_ret=(final_aum/AUM_0-1)
@@ -209,10 +229,6 @@ def main():
     # Skewness of daily returns
     skew = strat_rets.skew()
     print(f"Skew:          {skew:.3f}")
-
-    # Tradelog
-    with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', None):
-        print(f"day {day} tradelog:\n", tradelog)
 
     # Equity curve
     strat_aum   = strat['AUM']
