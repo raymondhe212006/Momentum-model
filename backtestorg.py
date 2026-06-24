@@ -11,13 +11,13 @@ def main():
     AUM_0 = 100000.0
     commission = 0.0035
     min_comm_per_order = 0.35
-    band_mult = 0.7
+    band_mult = 1
     band_simplified = 0
     trade_freq = 30
     sizing_type = "vol_target"
     target_vol = 0.02
     max_leverage = 4
-    day=20
+    day=200
 
     # Group data by day for faster access
     df = model()
@@ -41,8 +41,6 @@ def main():
 
     df_daily['ret'] = df_daily['close'].diff() / df_daily['close'].shift()
 
-
-    tradelog = pd.DataFrame()
     # Loop through all days, starting from the second day
     for d in range(1, len(all_days)):
         current_day = all_days[d]
@@ -100,6 +98,46 @@ def main():
 
         exposure = pd.Series(filled_values, index=current_day_data.index).shift(1).fillna(0).values  # Apply shift and fill NaNs
 
+        if d == day:
+            mins       = current_day_data["min_from_open"].values
+            close_vals = current_close_prices.values
+            fig, ax = plt.subplots(figsize=(12, 5))
+
+            ax.plot(mins, close_vals,  label='Close', color='steelblue', linewidth=1.5)
+            ax.plot(mins, UB.values,   label='UB',    color='green',  linestyle='--', linewidth=1)
+            ax.plot(mins, LB.values,   label='LB',    color='red',    linestyle='--', linewidth=1)
+            ax.plot(mins, vwap.values, label='VWAP',  color='orange', linestyle='-.', linewidth=0.9)
+
+            y_lo = min(LB.values.min(), close_vals.min()) * 0.999
+            y_hi = max(UB.values.max(), close_vals.max()) * 1.001
+            ax.fill_between(mins, y_lo, y_hi, where=(exposure == 1),  alpha=0.10, color='green', label='Long')
+            ax.fill_between(mins, y_lo, y_hi, where=(exposure == -1), alpha=0.10, color='red',   label='Short')
+
+            exp_diff      = np.diff(exposure, prepend=0)
+            long_entries  = np.where((exp_diff != 0) & (exposure == 1))[0]
+            short_entries = np.where((exp_diff != 0) & (exposure == -1))[0]
+            exits         = np.where((exp_diff != 0) & (exposure == 0))[0]
+            if len(long_entries):
+                ax.scatter(mins[long_entries],  current_close_prices.iloc[long_entries],
+                           color='green', marker='^', s=100, zorder=5, label='Long entry')
+            if len(short_entries):
+                ax.scatter(mins[short_entries], current_close_prices.iloc[short_entries],
+                           color='red',   marker='v', s=100, zorder=5, label='Short entry')
+            if len(exits):
+                ax.scatter(mins[exits],         current_close_prices.iloc[exits],
+                           color='black', marker='x', s=80,  zorder=5, label='Exit')
+
+            for x in range(30, len(current_day_data), 30):
+                ax.axvline(x=x, color='gray', linestyle=':', linewidth=1.2)
+
+            ax.set_title(f'Day {current_day} — Close, UB, LB, VWAP')
+            ax.set_xlabel('Minutes from Open')
+            ax.set_ylabel('Price ($)')
+            ax.legend(fontsize=8)
+            ax.grid(True, alpha=0.3)
+            plt.tight_layout()
+            plt.show()
+
         # Calculate trades count based on changes in exposure
         trades_count = np.sum(np.abs(np.diff(np.append(exposure, 0))))
 
@@ -148,40 +186,36 @@ def main():
     skew = strat_rets.skew()
     print(f"Skew:          {skew:.3f}")
 
-    # # Tradelog
-    # with pd.option_context('display.max_rows', None, 'display.max_columns', None, 'display.width', None):
-    #     print(f"day {day} tradelog:\n", tradelog)
+    # Equity curve
+    strat_aum   = strat['AUM']
+    spy_aum     = AUM_0 * (1 + strat['ret_spy'].fillna(0)).cumprod()
+    days        = strat.index
 
-    # # Equity curve
-    # strat_aum   = strat['AUM']
-    # spy_aum     = AUM_0 * (1 + strat['ret_spy'].fillna(0)).cumprod()
-    # days        = strat.index
+    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8),
+                                   gridspec_kw={'height_ratios': [3, 1]})
 
-    # fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8),
-    #                                gridspec_kw={'height_ratios': [3, 1]})
+    ax1.plot(days, strat_aum.values, label='Strategy', color='steelblue', linewidth=1.5)
+    ax1.plot(days, spy_aum.values,   label='SPY Buy & Hold', color='darkorange',
+             linestyle='--', linewidth=1.5)
+    ax1.set_title('Equity Curve', fontsize=13)
+    ax1.set_ylabel('AUM ($)')
+    ax1.legend()
+    ax1.grid(True, alpha=0.3)
+    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
 
-    # ax1.plot(days, strat_aum.values, label='Strategy', color='steelblue', linewidth=1.5)
-    # ax1.plot(days, spy_aum.values,   label='SPY Buy & Hold', color='darkorange',
-    #          linestyle='--', linewidth=1.5)
-    # ax1.set_title('Equity Curve', fontsize=13)
-    # ax1.set_ylabel('AUM ($)')
-    # ax1.legend()
-    # ax1.grid(True, alpha=0.3)
-    # ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    # ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
+    colors = ['steelblue' if r >= 0 else 'tomato' for r in strat_rets.values]
+    ax2.bar(strat_rets.index, strat_rets.values, color=colors, width=1)
+    ax2.axhline(0, color='black', linewidth=0.7)
+    ax2.set_title('Daily Returns', fontsize=11)
+    ax2.set_ylabel('Return')
+    ax2.grid(True, alpha=0.3)
+    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
+    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
 
-    # colors = ['steelblue' if r >= 0 else 'tomato' for r in strat_rets.values]
-    # ax2.bar(strat_rets.index, strat_rets.values, color=colors, width=1)
-    # ax2.axhline(0, color='black', linewidth=0.7)
-    # ax2.set_title('Daily Returns', fontsize=11)
-    # ax2.set_ylabel('Return')
-    # ax2.grid(True, alpha=0.3)
-    # ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    # ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-
-    # plt.tight_layout()
-    # plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
-    # plt.show()
+    plt.tight_layout()
+    plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
+    plt.show()
 
 
 if __name__ == "__main__":
