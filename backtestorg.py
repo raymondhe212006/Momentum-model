@@ -70,9 +70,6 @@ def main():
         signals[(current_close_prices > UB) & (current_close_prices > vwap)] = 1
         signals[(current_close_prices < LB) & (current_close_prices < vwap)] = -1
 
-
-        
-
         # Position sizing
         previous_aum = strat.loc[prev_day, 'AUM']
 
@@ -90,21 +87,6 @@ def main():
         exposure = np.full(len(current_day_data), np.nan)  # Start with NaNs
         exposure[trade_indices] = signals[trade_indices]  # Apply signals at trade times
 
-        # if d == 200:
-        #     mins = current_day_data["min_from_open"].values
-        #     fig, ax = plt.subplots(figsize=(12, 5))
-        #     ax.plot(mins, current_close_prices.values, label='Close', color='steelblue', linewidth=1.5)
-        #     ax.plot(mins, UB.values, label='UB', color='green', linestyle='--', linewidth=1)
-        #     ax.plot(mins, LB.values, label='LB', color='red', linestyle='--', linewidth=1)
-        #     for x in range(30, len(current_day_data), 30):
-        #         ax.axvline(x=x, color='gray', linestyle=':', linewidth=1.2)
-        #     ax.set_title(f'Day {current_day} — Close, UB, LB')
-        #     ax.set_xlabel('Minutes from Open')
-        #     ax.set_ylabel('Price ($)')
-        #     ax.legend()
-        #     ax.grid(True, alpha=0.3)
-        #     plt.tight_layout()
-        #     plt.show()
 
         # Custom forward-fill that stops at zeros
         last_valid = np.nan  # Initialize last valid value as NaN
@@ -117,8 +99,6 @@ def main():
             filled_values.append(last_valid)
 
         exposure = pd.Series(filled_values, index=current_day_data.index).shift(1).fillna(0).values  # Apply shift and fill NaNs
-        if d==200:
-            print(exposure)
 
         # Calculate trades count based on changes in exposure
         trades_count = np.sum(np.abs(np.diff(np.append(exposure, 0))))

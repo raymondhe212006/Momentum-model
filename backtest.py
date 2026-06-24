@@ -11,7 +11,7 @@ def main():
     AUM_0 = 100000.0
     commission = 0.0035
     min_comm_per_order = 0.35
-    band_mult = 1
+    band_mult = 0.7
     band_simplified = 0
     trade_freq = 30
     sizing_type = "vol_target"
