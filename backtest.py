@@ -11,13 +11,13 @@ def main():
     AUM_0 = 100000.0
     commission = 0.0035
     min_comm_per_order = 0.35
-    band_mult = 0.7
+    band_mult = 1
     band_simplified = 0
     trade_freq = 30
     sizing_type = "vol_target"
     target_vol = 0.02
     max_leverage = 4
-    day=359
+    day=200
 
     # Group data by day for faster access
     df = model()
@@ -35,6 +35,7 @@ def main():
     # Calculate daily returns for SPY using the closing prices
     with open("Data_Import/data_cache/SPY_2024-06-24_2026-06-19_day.pkl", "rb") as f:
         spy_daily_data = pickle.load(f) 
+
     df_daily = pd.DataFrame(spy_daily_data)
     df_daily['caldt'] = pd.to_datetime(df_daily['caldt']).dt.date
     df_daily.set_index('caldt', inplace=True)  # Set the datetime column as the DataFrame index for easy time series manipulation.
@@ -48,6 +49,10 @@ def main():
         prev_day = all_days[d-1]
         prev_day_data = daily_groups.get_group(prev_day)
         current_day_data = daily_groups.get_group(current_day)
+
+        # Added Sanity Check
+        if not(prev_day in daily_groups.groups and current_day in daily_groups.groups):
+            continue
 
         #skip 1st 14 days
         if 'sigma_open' in current_day_data.columns and current_day_data['sigma_open'].isna().all():
@@ -64,9 +69,44 @@ def main():
         sigma_open = current_day_data['sigma_open']
         UB = max(open_price, prev_close_adjusted) * (1 + band_mult * sigma_open)
         LB = min(open_price, prev_close_adjusted) * (1 - band_mult * sigma_open)
- 
 
-        # Determine trading signals
+        # # Determine trading signals ORG VERSION (changed enter condition)
+        # signals = np.zeros_like(current_close_prices) #empty array
+        # prev_signal=0
+        # for i, idx in enumerate(current_close_prices.index):
+        #     price = current_close_prices.loc[idx]
+        #     ub_val = UB.loc[idx]
+        #     lb_val = LB.loc[idx]
+        #     vwap_val = vwap.loc[idx]
+        #     if i % trade_freq == 0:
+        #         if prev_signal == 0:
+        #             if price > ub_val and price > vwap_val:
+        #                 signals[i] = 1
+        #                 prev_signal = 1
+        #             elif price < lb_val and price < vwap_val:
+        #                 signals[i] = -1
+        #                 prev_signal = -1
+        #             else:
+        #                 signals[i]=0
+        #         elif prev_signal == 1 and (price < ub_val or price < vwap_val):
+        #             signals[i] = 0
+        #             prev_signal = 0
+        #             if price < lb_val:
+        #                 signals[i] = -1
+        #                 prev_signal = -1
+        #         elif prev_signal == -1 and (price > lb_val or price > vwap_val):
+        #             signals[i] = 0
+        #             prev_signal = 0
+        #             if price > ub_val:
+        #                 signals[i] = 1
+        #                 prev_signal = 1
+        #         else:
+        #             signals[i] = prev_signal
+        #     else:
+        #         signals[i] = prev_signal
+
+
+        # Determine trading signals IMPL version (differ in entering condition)
         signals = np.zeros_like(current_close_prices) #empty array
         prev_signal=0
         for i, idx in enumerate(current_close_prices.index):
@@ -121,7 +161,16 @@ def main():
         # Always exit position at market close
         exposure[-1]=0
 
+        # Calculate trades count based on changes in exposure
+        trades_count=0
+        for i in range(1,len(exposure)):
+            if exposure[i-1] != exposure[i]:
+                if exposure[i-1] != 0 and exposure[i] !=0: # need two trades for selling a long then buying a short on same minute
+                    trades_count+=1
+                trades_count += 1
+
         if d == day:
+            # print(exposure)
             mins       = current_day_data["min_from_open"].values
             close_vals = current_close_prices.values
             fig, ax = plt.subplots(figsize=(12, 5))
@@ -145,13 +194,13 @@ def main():
             exits         = np.where((exp_diff != 0) & (exposure == 0))[0]
             if len(long_entries):
                 ax.scatter(mins[long_entries],  current_close_prices.iloc[long_entries],
-                           color='green', marker='^', s=100, zorder=5, label='Long entry')
+                            color='green', marker='^', s=100, zorder=5, label='Long entry')
             if len(short_entries):
                 ax.scatter(mins[short_entries], current_close_prices.iloc[short_entries],
-                           color='red',   marker='v', s=100, zorder=5, label='Short entry')
+                            color='red',   marker='v', s=100, zorder=5, label='Short entry')
             if len(exits):
                 ax.scatter(mins[exits],         current_close_prices.iloc[exits],
-                           color='black', marker='x', s=80,  zorder=5, label='Exit')
+                            color='black', marker='x', s=80,  zorder=5, label='Exit')
 
             # 30-min checkpoint verticals
             for x in range(30, len(current_day_data), 30):
@@ -165,19 +214,15 @@ def main():
             plt.tight_layout()
             plt.show()
 
-        # Calculate trades count based on changes in exposure
-        trades_count=0
-        for i in range(len(exposure)-1):
-            if i % trade_freq == 0:
-                if exposure[i] != exposure[i+1]:
-                    trades_count += 1
-
         # Calculate PnL
+        # UNCOMMENT IF YOU WANT TO TRADE STRAIGHT AWAY (NO DELAY) and match ORIGINAL MODEL
+        # Note this induces look ahead bias? since machine takes time to calculate signals so we should only trade minute after
+        #exposure = exposure = pd.Series(signals, index=current_day_data.index).shift(0).fillna(0).values  
         prev_hold=0
         enter=0
         gross_pnl=0.0
         for i in range(len(exposure)):
-            if exposure[i] != prev_hold:
+            if exposure[i] != prev_hold or i == len(exposure)-1: # for setting change purposes namely commenting exposure[-1]=0
                 if prev_hold != 0:
                     #sigma open involves the close price of current min so we must take action next minute
                     gross_pnl += (current_close_prices.iloc[i] - enter) * shares * prev_hold
@@ -185,8 +230,7 @@ def main():
                     enter=current_close_prices.iloc[i]
                 else:
                     enter=0
-                prev_hold = exposure[i]        
-        
+                prev_hold = exposure[i]
 
         commission_paid = trades_count * max(min_comm_per_order, commission * shares)
         net_pnl = gross_pnl - commission_paid
@@ -197,6 +241,7 @@ def main():
 
         # Save the passive Buy&Hold daily return for SPY
         strat.loc[current_day, 'ret_spy'] = df_daily.loc[df_daily.index == current_day, 'ret'].values[0]
+
 
         
     # Results

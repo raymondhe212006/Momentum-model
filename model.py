@@ -1,5 +1,4 @@
 from IPython.core import display_functions
-from IPython.core import display_functions
 from matplotlib import ticker
 import pandas as pd
 import numpy as np
@@ -14,10 +13,13 @@ import pickle
 def model():
     with open("Data_Import/data_cache/SPY_2024-06-24_2026-06-19_minute.pkl", "rb") as f:
         spy_intra_data = pickle.load(f)
+
+    #print(spy_intra_data)
     
     with open("Data_Import/data_cache/SPY_dividends.pkl", "rb") as f:
         dividends = pickle.load(f)
     
+    #print(dividends)
 
     df = pd.DataFrame(spy_intra_data)
     df['day'] = pd.to_datetime(df['caldt']).dt.date  # Extract the date part from the datetime for daily analysis.
@@ -72,7 +74,7 @@ def model():
             df.loc[current_day_data.index, 'spy_dvol'] = spy_ret.iloc[d-14:d].std(skipna=False)
 
     # Calculate the minutes from market open and determine the minute of the day for each timestamp.
-    df['min_from_open'] = ((df.index - df.index.normalize()) / pd.Timedelta(minutes=1)) - (9 * 60 + 30) + 1
+    df['min_from_open'] = ((df.index - df.index.normalize()) / pd.Timedelta(minutes=1)) - (9 * 60 + 30)
     df['minute_of_day'] = df['min_from_open'].round().astype(int)
 
     # Group data by 'minute_of_day' for minute-level calculations.
