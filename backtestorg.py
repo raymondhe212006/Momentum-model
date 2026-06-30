@@ -49,6 +49,10 @@ def main():
         prev_day_data = daily_groups.get_group(prev_day)
         current_day_data = daily_groups.get_group(current_day)
 
+        # Added Sanity Check
+        if not(prev_day in daily_groups.groups and current_day in daily_groups.groups):
+            continue
+
         if 'sigma_open' in current_day_data.columns and current_day_data['sigma_open'].isna().all():
             continue
 
