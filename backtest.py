@@ -8,7 +8,12 @@ from model import model
 import os
 from dotenv import load_dotenv
 load_dotenv()
+# 0 for original, 1 for impl
 MODE = int(os.getenv("MODE"))
+# MODE = 0 to match original with impl logic
+# MODE = 1 for different enter strategy and potential look ahead fix
+# MODE = 2 for different enter strategy and potential look ahead fix, and different checking strategy (check every 30 days, buy after 1 min, allow 1st min check/trade)
+# MODE 0 and 1 check min before every 30 min interval to trade on the interval 
 MODEL_MODE = int(os.getenv("MODEL_MODE"))
 
 def main():

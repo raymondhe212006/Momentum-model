@@ -8,15 +8,18 @@ import matplotlib.dates as mdates
 from   matplotlib.ticker import FuncFormatter
 import statsmodels.api as sm
 import pickle
+import os
+
+DATA_CACHE_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Data_Import", "data_cache")
 
 
 def model(model_type):
-    with open("Data_Import/data_cache/SPY_2024-06-24_2026-06-19_minute.pkl", "rb") as f:
+    with open(os.path.join(DATA_CACHE_DIR, "SPY_2024-06-24_2026-06-19_minute.pkl"), "rb") as f:
         spy_intra_data = pickle.load(f)
 
     #print(spy_intra_data)
-    
-    with open("Data_Import/data_cache/SPY_dividends.pkl", "rb") as f:
+
+    with open(os.path.join(DATA_CACHE_DIR, "SPY_dividends.pkl"), "rb") as f:
         dividends = pickle.load(f)
     
     #print(dividends)
