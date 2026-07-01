@@ -71,37 +71,58 @@ def model(model_type):
 
         # Calculate the 15-day rolling volatility, starting calculation after accumulating 15 days of data
         if d > 14:
-            if model_type ==0:
-                # Original implementation: use past 14 days for yesterday's volatility (t-14 to t-1)
-                df.loc[current_day_data.index, 'spy_dvol'] = spy_ret.iloc[d-15:d-1].std(skipna=False)
-            if model_type ==1:
-                # My implementation: use past 15 days for yesterday's volatility (t-14 to t)
-                df.loc[current_day_data.index, 'spy_dvol'] = spy_ret.iloc[d-14:d].std(skipna=False)
+            df.loc[current_day_data.index, 'spy_dvol'] = spy_ret.iloc[d-15:d-1].std(skipna=False)
 
-    # Calculate the minutes from market open and determine the minute of the day for each timestamp.
+    df2=df.copy()
+
+    # Calculate the minutes from market open and determine the minute of the day for each timestamp
     #----------------------------------------- NOTE -----------------------------------------
-    # This +1 matters as original backtest uses it to orient its trade indicies (check strategy interval)
-    df['min_from_open'] = ((df.index - df.index.normalize()) / pd.Timedelta(minutes=1)) - (9 * 60 + 30) + 1
+    # This +1 matters as original backtest uses it to orient its trade indicies
+    df['min_from_open'] = ((df.index - df.index.normalize()) / pd.Timedelta(minutes=1)) - (9 * 60 + 30)+1
     df['minute_of_day'] = df['min_from_open'].round().astype(int)
 
     # Group data by 'minute_of_day' for minute-level calculations.
     minute_groups = df.groupby('minute_of_day')
 
+
     # Calculate the mean of the last 14 trading days (today included) of the absolute move from their respective day opens.
-    if model_type == 0:
-        df['move_open_rolling_mean'] = minute_groups['move_open'].transform(lambda x: x.rolling(window=14, min_periods=14).mean())
-    if model_type == 1:
-        df['move_open_rolling_mean'] = minute_groups['move_open'].transform(lambda x: x.rolling(window=14, min_periods=13).mean())
-    
+    df['move_open_rolling_mean'] = minute_groups['move_open'].transform(lambda x: x.rolling(window=14, min_periods=13).mean())
+    print(df['move_open_rolling_mean'])
+
     # Shift down so becomes last 14 days (today excluded)
     df['sigma_open'] = minute_groups['move_open_rolling_mean'].transform(lambda x: x.shift(1))
 
-    # Convert dividend dates to datetime and merge dividend data based on trading days.
-    # Value to correct the opening price that is not a loss on our end
-    dividends['day'] = pd.to_datetime(dividends['caldt']).dt.date
-    df = df.merge(dividends[['day', 'dividend']], on='day', how='left')
-    df['dividend'] = df['dividend'].fillna(0)  # Fill missing dividend data with 0.
-            
-    return df
+
+
+    #Org 
+    # Calculate the minutes from market open and determine the minute of the day for each timestamp.
+    df2['min_from_open'] = ((df2.index - df.index.normalize()) / pd.Timedelta(minutes=1)) - (9 * 60 + 30) + 1 # DIFFERENCE
+    df2['minute_of_day'] = df2['min_from_open'].round().astype(int)
+
+    # Group data by 'minute_of_day' for minute-level calculations.
+    minute_groups2 = df2.groupby('minute_of_day')
+
+    # Calculate the mean of the last 14 trading days (today included) of the absolute move from their respective day opens.
+    df2['move_open_rolling_mean'] = minute_groups2['move_open'].transform(lambda x: x.rolling(window=14, min_periods=13).mean())
+    print(df2['move_open_rolling_mean'])
+
+    same = df2["move_open_rolling_mean"].equals(df["move_open_rolling_mean"])
+    print(same)
+    
+
+    # Shift down so becomes last 14 days (today excluded)
+    df2['sigma_open'] = minute_groups2['move_open_rolling_mean'].transform(lambda x: x.shift(1))
+
+    same = df2["sigma_open"].equals(df["sigma_open"])
+    print(same)
+
+
+def main():
+    model()
+    return 0
+
+
+if __name__ == "__main__":
+    exit(main())
 
 

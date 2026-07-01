@@ -5,6 +5,11 @@ import pickle
 import matplotlib.pyplot as plt
 import matplotlib.dates as mdates
 from model import model
+import os
+from dotenv import load_dotenv
+load_dotenv()
+MODE = int(os.getenv("MODE"))
+MODEL_MODE = int(os.getenv("MODEL_MODE"))
 
 def main():
     # Constants and settings
@@ -20,7 +25,7 @@ def main():
     day=200
 
     # Group data by day for faster access
-    df = model()
+    df = model(MODEL_MODE)
     all_days = df['day'].unique()
 
     # Group data by day for faster access
@@ -70,77 +75,86 @@ def main():
         UB = max(open_price, prev_close_adjusted) * (1 + band_mult * sigma_open)
         LB = min(open_price, prev_close_adjusted) * (1 - band_mult * sigma_open)
 
-        # # Determine trading signals ORG VERSION (changed enter condition)
-        # signals = np.zeros_like(current_close_prices) #empty array
-        # prev_signal=0
-        # for i, idx in enumerate(current_close_prices.index):
-        #     price = current_close_prices.loc[idx]
-        #     ub_val = UB.loc[idx]
-        #     lb_val = LB.loc[idx]
-        #     vwap_val = vwap.loc[idx]
-        #     if i % trade_freq == 0:
-        #         if prev_signal == 0:
-        #             if price > ub_val and price > vwap_val:
-        #                 signals[i] = 1
-        #                 prev_signal = 1
-        #             elif price < lb_val and price < vwap_val:
-        #                 signals[i] = -1
-        #                 prev_signal = -1
-        #             else:
-        #                 signals[i]=0
-        #         elif prev_signal == 1 and (price < ub_val or price < vwap_val):
-        #             signals[i] = 0
-        #             prev_signal = 0
-        #             if price < lb_val:
-        #                 signals[i] = -1
-        #                 prev_signal = -1
-        #         elif prev_signal == -1 and (price > lb_val or price > vwap_val):
-        #             signals[i] = 0
-        #             prev_signal = 0
-        #             if price > ub_val:
-        #                 signals[i] = 1
-        #                 prev_signal = 1
-        #         else:
-        #             signals[i] = prev_signal
-        #     else:
-        #         signals[i] = prev_signal
 
-
-        # Determine trading signals IMPL version (differ in entering condition)
         signals = np.zeros_like(current_close_prices) #empty array
-        prev_signal=0
-        for i, idx in enumerate(current_close_prices.index):
-            price = current_close_prices.loc[idx]
-            ub_val = UB.loc[idx]
-            lb_val = LB.loc[idx]
-            vwap_val = vwap.loc[idx]
-            if i % trade_freq == 0:
-                if prev_signal == 0:
-                    if price > ub_val:
-                        signals[i] = 1
-                        prev_signal = 1
-                    elif price < lb_val:
-                        signals[i] = -1
-                        prev_signal = -1
+
+        # Determine trading signals ORG VERSION
+        if MODE == 0:
+            prev_signal=0
+            for i, idx in enumerate(current_close_prices.index):
+                price = current_close_prices.loc[idx]
+                ub_val = UB.loc[idx]
+                lb_val = LB.loc[idx]
+                vwap_val = vwap.loc[idx]
+                if (i+1) % trade_freq == 0: # Trade logic in Original can't trade on very beginning of the day and checks on the day before 30 minute interval to trade on the actual interval
+                    if prev_signal == 0:
+                        if price > ub_val and price > vwap_val:
+                            signals[i] = 1
+                            prev_signal = 1
+                        elif price < lb_val and price < vwap_val:
+                            signals[i] = -1
+                            prev_signal = -1
+                        else:
+                            signals[i]=0
+                    elif prev_signal == 1 and (price < ub_val or price < vwap_val):
+                        signals[i] = 0
+                        prev_signal = 0
+                        if price < lb_val:
+                            signals[i] = -1
+                            prev_signal = -1
+                    elif prev_signal == -1 and (price > lb_val or price > vwap_val):
+                        signals[i] = 0
+                        prev_signal = 0
+                        if price > ub_val:
+                            signals[i] = 1
+                            prev_signal = 1
                     else:
-                        signals[i]=0
-                elif prev_signal == 1 and (price < ub_val or price < vwap_val):
-                    signals[i] = 0
-                    prev_signal = 0
-                    if price < lb_val:
-                        signals[i] = -1
-                        prev_signal = -1
-                elif prev_signal == -1 and (price > lb_val or price > vwap_val):
-                    signals[i] = 0
-                    prev_signal = 0
-                    if price > ub_val:
-                        signals[i] = 1
-                        prev_signal = 1
+                        signals[i] = prev_signal
                 else:
                     signals[i] = prev_signal
-            else:
-                signals[i] = prev_signal
+        
+        # Determine trading signals IMPL version (differ in entering condition)
+        if MODE == 1 or MODE == 2: 
+            prev_signal=0
+            for i, idx in enumerate(current_close_prices.index):
+                price = current_close_prices.loc[idx]
+                ub_val = UB.loc[idx]
+                lb_val = LB.loc[idx]
+                vwap_val = vwap.loc[idx]
+                # Trade logic in Original can't trade on very beginning of the day and checks on the day before 30 minute interval to trade on the actual interval
+                # Mode = 2 for check on 30 min interval and allow 1st day
+                if MODE == 1:
+                    trade_index= i+1
+                if MODE == 2: 
+                    trade_index= i
 
+                if trade_index % trade_freq == 0: # for mode=2 only: add "and i != 0" to avoid checking/trading on first minute
+                    if prev_signal == 0:
+                        if price > ub_val:
+                            signals[i] = 1
+                            prev_signal = 1
+                        elif price < lb_val:
+                            signals[i] = -1
+                            prev_signal = -1
+                        else:
+                            signals[i]=0
+                    elif prev_signal == 1 and (price < ub_val or price < vwap_val):
+                        signals[i] = 0
+                        prev_signal = 0
+                        if price < lb_val:
+                            signals[i] = -1
+                            prev_signal = -1
+                    elif prev_signal == -1 and (price > lb_val or price > vwap_val):
+                        signals[i] = 0
+                        prev_signal = 0
+                        if price > ub_val:
+                            signals[i] = 1
+                            prev_signal = 1
+                    else:
+                        signals[i] = prev_signal
+                else:
+                    signals[i] = prev_signal
+        
 
         # How much money from previous day
         previous_aum = strat.loc[prev_day, 'AUM']
@@ -168,6 +182,38 @@ def main():
                 if exposure[i-1] != 0 and exposure[i] !=0: # need two trades for selling a long then buying a short on same minute
                     trades_count+=1
                 trades_count += 1
+
+        # Calculate PnL
+        # --------------------------------------------- NOTICE ---------------------------------------------
+        # UNCOMMENT IF YOU WANT TO TRADE STRAIGHT AWAY (NO DELAY) and match ORIGINAL MODEL
+        # This induces look ahead bias? since machine takes time to calculate signals so we should only trade minute after
+        if MODE == 0:
+            exposure = pd.Series(signals, index=current_day_data.index).shift(0).fillna(0).values 
+
+        # --------------------------------------------- NOTICE ---------------------------------------------
+        prev_hold=0
+        enter=0
+        gross_pnl=0.0
+        for i in range(len(exposure)):
+            if exposure[i] != prev_hold or i == len(exposure)-1: # for setting change purposes namely commenting exposure[-1]=0
+                if prev_hold != 0:
+                    #sigma open involves the close price of current min so we must take action next minute
+                    gross_pnl += (current_close_prices.iloc[i] - enter) * shares * prev_hold
+                if exposure[i]!=0:
+                    enter=current_close_prices.iloc[i]
+                else:
+                    enter=0
+                prev_hold = exposure[i]
+
+        commission_paid = trades_count * max(min_comm_per_order, commission * shares)
+        net_pnl = gross_pnl - commission_paid
+
+        # Update the daily return and new AUM
+        strat.loc[current_day, 'AUM'] = previous_aum + net_pnl
+        strat.loc[current_day, 'ret'] = net_pnl / previous_aum
+
+        # Save the passive Buy&Hold daily return for SPY
+        strat.loc[current_day, 'ret_spy'] = df_daily.loc[df_daily.index == current_day, 'ret'].values[0]
 
         if d == day:
             # print(exposure)
@@ -212,38 +258,9 @@ def main():
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
             plt.tight_layout()
-            plt.show()
-
-        # Calculate PnL
-        # UNCOMMENT IF YOU WANT TO TRADE STRAIGHT AWAY (NO DELAY) and match ORIGINAL MODEL
-        # Note this induces look ahead bias? since machine takes time to calculate signals so we should only trade minute after
-        #exposure = exposure = pd.Series(signals, index=current_day_data.index).shift(0).fillna(0).values  
-        prev_hold=0
-        enter=0
-        gross_pnl=0.0
-        for i in range(len(exposure)):
-            if exposure[i] != prev_hold or i == len(exposure)-1: # for setting change purposes namely commenting exposure[-1]=0
-                if prev_hold != 0:
-                    #sigma open involves the close price of current min so we must take action next minute
-                    gross_pnl += (current_close_prices.iloc[i] - enter) * shares * prev_hold
-                if exposure[i]!=0:
-                    enter=current_close_prices.iloc[i]
-                else:
-                    enter=0
-                prev_hold = exposure[i]
-
-        commission_paid = trades_count * max(min_comm_per_order, commission * shares)
-        net_pnl = gross_pnl - commission_paid
-
-        # Update the daily return and new AUM
-        strat.loc[current_day, 'AUM'] = previous_aum + net_pnl
-        strat.loc[current_day, 'ret'] = net_pnl / previous_aum
-
-        # Save the passive Buy&Hold daily return for SPY
-        strat.loc[current_day, 'ret_spy'] = df_daily.loc[df_daily.index == current_day, 'ret'].values[0]
+            #plt.show()
 
 
-        
     # Results
     final_aum=strat['AUM'].iloc[-1]
     total_ret=(final_aum/AUM_0-1)
@@ -304,7 +321,7 @@ def main():
 
     plt.tight_layout()
     plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
-    plt.show()
+    #plt.show()
 
 
 if __name__ == "__main__":
