@@ -15,6 +15,8 @@ MODE = int(os.getenv("MODE"))
 # MODE = 2 for different enter strategy and potential look ahead fix, and different checking strategy (check every 30 days, buy after 1 min, allow 1st min check/trade)
 # MODE 0 and 1 check min before every 30 min interval to trade on the interval 
 MODEL_MODE = int(os.getenv("MODEL_MODE"))
+SLIPPAGE = os.getenv("SLIPPAGE") == 'True'  # Convert to boolean
+NEXT_OPEN = os.getenv("NEXT_OPEN") == 'True'
 
 # Constants and settings
 AUM_0 = 100000.0
@@ -27,6 +29,9 @@ sizing_type = "vol_target"
 target_vol = 0.02
 max_leverage = 4
 day=200
+
+slippage_rate = 1/10000
+overlay_ratios = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
 
 
 def max_drawdown_from_aum(aum):
@@ -129,6 +134,7 @@ def main():
 
         open_price = current_day_data['open'].iloc[0] # opening price so first entry
         current_close_prices = current_day_data['close']
+        current_open_prices = current_day_data['open']
         spx_vol = current_day_data['spy_dvol'].iloc[0] #same number every minute so pick first
         vwap = current_day_data['vwap']
 
@@ -233,8 +239,15 @@ def main():
             #everyday use max leverage
             shares = round(previous_aum / open_price)
 
-        # Apply shift to avoid see ahead bias
-        exposure = pd.Series(signals, index=current_day_data.index).shift(1).fillna(0).values  
+        
+        # --------------------------------------------- NOTICE ---------------------------------------------
+        # TRADE STRAIGHT AWAY (NO DELAY) and match ORIGINAL MODEL OR TRADE ON NEXT MIN OPEN
+        # This induces look ahead bias? since machine takes time to calculate signals so we should only trade minute after
+        shift = 0
+        if NEXT_OPEN:
+            shift = 1
+        exposure = pd.Series(signals, index=current_day_data.index).shift(shift).fillna(0).values
+        # --------------------------------------------- NOTICE ---------------------------------------------
         
         # Always exit position at market close
         exposure[-1]=0
@@ -247,14 +260,9 @@ def main():
                     trades_count+=1
                 trades_count += 1
 
-        # Calculate PnL
-        # --------------------------------------------- NOTICE ---------------------------------------------
-        # UNCOMMENT IF YOU WANT TO TRADE STRAIGHT AWAY (NO DELAY) and match ORIGINAL MODEL
-        # This induces look ahead bias? since machine takes time to calculate signals so we should only trade minute after
-        if MODE == 0 or MODE == 1 or MODE == 2:
-            exposure = pd.Series(signals, index=current_day_data.index).shift(0).fillna(0).values 
+        
 
-        # --------------------------------------------- NOTICE ---------------------------------------------
+        # Calculate PnL
         prev_hold=0
         enter=0
         gross_pnl=0.0
@@ -263,29 +271,42 @@ def main():
         gross_pnl_short=0.0 
         trades_count_short = 0
         for i in range(len(exposure)):
-            if exposure[i] != prev_hold or i == len(exposure)-1: # for setting change purposes namely commenting exposure[-1]=0
+            price = current_close_prices.iloc[i]
+            if NEXT_OPEN:
+                price = current_open_prices.iloc[i]
+            if exposure[i] != prev_hold or i == len(exposure)-1:
+                exit_price = price
+                enter_price = price 
                 if prev_hold != 0:
+                    if SLIPPAGE:
+                        exit_price *= (1 - slippage_rate * prev_hold)
+                    
                     #sigma open involves the close price of current min so we must take action next minute
-                    gross_pnl += (current_close_prices.iloc[i] - enter) * shares * prev_hold
+                    gross_pnl += (exit_price - enter) * shares * prev_hold
                     if prev_hold == 1:
-                        gross_pnl_long += (current_close_prices.iloc[i] - enter) * shares * prev_hold
+                        gross_pnl_long += (exit_price - enter) * shares * prev_hold
                         trades_count_long+=2
                     if prev_hold == -1:
-                        gross_pnl_short += (current_close_prices.iloc[i] - enter) * shares * prev_hold
+                        gross_pnl_short += (exit_price - enter) * shares * prev_hold
                         trades_count_short+=2
+                
                 if exposure[i]!=0:
-                    enter=current_close_prices.iloc[i]
+                    if SLIPPAGE:
+                        enter_price *= (1 + slippage_rate * exposure[i])
+                    
+                    enter = enter_price
                 else:
                     enter=0
+                    
                 prev_hold = exposure[i]
 
         # sanity checks
         if not(np.isclose(gross_pnl_long+gross_pnl_short,gross_pnl)):
-            print("uneven gross pnl");
+            print("uneven gross pnl")
             print(gross_pnl_long+gross_pnl_short)
             print(gross_pnl)
         if trades_count_long+trades_count_short != trades_count:
-            print("uneven trade count");
+            print("uneven trade count")
             print(trades_count_long+trades_count_short)
             print(trades_count)
 
@@ -374,6 +395,8 @@ def main():
             plt.tight_layout()
             #plt.show()
 
+
+
     # Results
     spy_rets = strat["ret_spy"].dropna()
 
@@ -415,29 +438,155 @@ def main():
 
     
     print("\nShort Overlay\n")
+    # Build aligned SPY + short-leg return data once
     overlay = pd.concat([
         strat["ret_spy"],
         strat_short["ret"],
     ], axis=1).dropna()
 
     overlay.columns = ["SPY", "Short Overlay"]
-    overlay["SPY + Short Overlay"] = overlay["SPY"] + overlay["Short Overlay"]
 
-    overlay_spy_aum = AUM_0 * (1 + overlay["SPY"]).cumprod()
-    overlay_combo_aum = AUM_0 * (1 + overlay["SPY + Short Overlay"]).cumprod()
+    # Worst 10 SPY days
+    worst_days = overlay["SPY"].nsmallest(10).index
 
-    overlay_results = pd.DataFrame([
-        report_return_stream("SPY Long Book", overlay["SPY"], overlay["SPY"]),
-        report_return_stream("SPY + Short Overlay", overlay["SPY + Short Overlay"], overlay["SPY"]),
-    ])
+    # Define calm days as the middle 80% of SPY daily returns
+    low = overlay["SPY"].quantile(0.10)
+    high = overlay["SPY"].quantile(0.90)
+    calm_mask = overlay["SPY"].between(low, high)
 
+
+    def report_return_stream(name, rets, spy_rets):
+        aligned = pd.concat([rets, spy_rets], axis=1).dropna()
+        aligned.columns = ["portfolio", "spy"]
+
+        portfolio = aligned["portfolio"]
+        spy = aligned["spy"]
+
+        aum = AUM_0 * (1 + portfolio).cumprod()
+
+        return {
+            "Portfolio": name,
+            "Total Return": aum.iloc[-1] / AUM_0 - 1,
+            "Sharpe": portfolio.mean() / portfolio.std() * np.sqrt(252),
+            "Beta": portfolio.cov(spy) / spy.var(),
+            "Skew": portfolio.skew(),
+            "Max Drawdown": max_drawdown_from_aum(aum),
+        }
+
+
+    rows = []
+
+    for overlay_ratio in overlay_ratios:
+        combo_rets = (
+            overlay["SPY"]
+            + overlay_ratio * overlay["Short Overlay"]
+        )
+
+        metrics = report_return_stream(
+            f"SPY + {overlay_ratio}x Short Overlay",
+            combo_rets,
+            overlay["SPY"],
+        )
+
+        spy_worst_avg = overlay.loc[worst_days, "SPY"].mean()
+        combo_worst_avg = combo_rets.loc[worst_days].mean()
+
+        calm_drag = (
+            overlay_ratio
+            * overlay.loc[calm_mask, "Short Overlay"].mean()
+        )
+
+        rows.append({
+            **metrics,
+            "Overlay Ratio": overlay_ratio,
+            "Gross Exposure": 1 + overlay_ratio,
+            "Worst 10 Avg Return": combo_worst_avg,
+            "Worst 10 Improvement": combo_worst_avg - spy_worst_avg,
+            "Calm Period Drag": calm_drag,
+        })
+
+
+    overlay_results = pd.DataFrame(rows)
+
+    # Baseline is the 0.0x overlay row
+    baseline_beta = overlay_results.loc[
+        overlay_results["Overlay Ratio"] == 0,
+        "Beta"
+    ].iloc[0]
+
+    baseline_dd = overlay_results.loc[
+        overlay_results["Overlay Ratio"] == 0,
+        "Max Drawdown"
+    ].iloc[0]
+
+    overlay_results["Beta Reduction"] = (
+        baseline_beta - overlay_results["Beta"]
+    )
+
+    overlay_results["Drawdown Relief"] = (
+        overlay_results["Max Drawdown"] - baseline_dd
+    )
+
+    overlay_results["Beta Reduction per 1.0x"] = np.where(
+        overlay_results["Overlay Ratio"] > 0,
+        overlay_results["Beta Reduction"]
+        / overlay_results["Overlay Ratio"],
+        np.nan,
+    )
+
+    overlay_results["DD Relief per 1.0x"] = np.where(
+        overlay_results["Overlay Ratio"] > 0,
+        overlay_results["Drawdown Relief"]
+        / overlay_results["Overlay Ratio"],
+        np.nan,
+    )
+
+
+    # Format output
     overlay_display = overlay_results.copy()
 
-    overlay_display["Total Return"] = overlay_display["Total Return"].map(lambda x: f"{x:.2%}")
-    overlay_display["Sharpe"] = overlay_display["Sharpe"].map(lambda x: f"{x:.3f}")
-    overlay_display["Beta"] = overlay_display["Beta"].map(lambda x: f"{x:.3f}")
-    overlay_display["Skew"] = overlay_display["Skew"].map(lambda x: f"{x:.3f}")
-    overlay_display["Max Drawdown"] = overlay_display["Max Drawdown"].map(lambda x: f"{x:.2%}")
+    percent_cols = [
+        "Total Return",
+        "Max Drawdown",
+        "Worst 10 Avg Return",
+        "Worst 10 Improvement",
+        "Calm Period Drag",
+        "Drawdown Relief",
+        "DD Relief per 1.0x",
+    ]
+
+    for col in percent_cols:
+        overlay_display[col] = overlay_display[col].map(
+            lambda x: "" if pd.isna(x) else f"{x:.2%}"
+        )
+
+    decimal_cols = [
+        "Sharpe",
+        "Beta",
+        "Skew",
+        "Gross Exposure",
+        "Beta Reduction",
+        "Beta Reduction per 1.0x",
+    ]
+
+    for col in decimal_cols:
+        overlay_display[col] = overlay_display[col].map(
+            lambda x: "" if pd.isna(x) else f"{x:.3f}"
+        )
+
+    overlay_display = overlay_display.drop(columns=["Overlay Ratio", "Gross Exposure"])
+
+    overlay_display = overlay_display.rename(columns={
+        "Total Return": "Return",
+        "Max Drawdown": "Max DD",
+        "Worst 10 Avg Return": "Worst 10 Avg",
+        "Worst 10 Improvement": "Worst 10 Help",
+        "Calm Period Drag": "Calm Drag",
+        "Beta Reduction": "Beta Red.",
+        "Drawdown Relief": "DD Relief",
+        "Beta Reduction per 1.0x": "Beta Red./x",
+        "DD Relief per 1.0x": "DD Relief/x",
+    })
 
     print(overlay_display.to_string(index=False))
 
