@@ -91,10 +91,8 @@ def model(model_type):
     minute_groups = df.groupby('minute_of_day')
 
     # Calculate the mean of the last 14 trading days (today included) of the absolute move from their respective day opens.
-    if model_type == 0:
-        df['move_open_rolling_mean'] = minute_groups['move_open'].transform(lambda x: x.rolling(window=14, min_periods=14).mean())
-    if model_type == 1:
-        df['move_open_rolling_mean'] = minute_groups['move_open'].transform(lambda x: x.rolling(window=14, min_periods=13).mean())
+    # min periods 14 to line up data to all start on day 15
+    df['move_open_rolling_mean'] = minute_groups['move_open'].transform(lambda x: x.rolling(window=14, min_periods=14).mean())
     
     # Shift down so becomes last 14 days (today excluded)
     df['sigma_open'] = minute_groups['move_open_rolling_mean'].transform(lambda x: x.shift(1))
@@ -104,6 +102,17 @@ def model(model_type):
     dividends['day'] = pd.to_datetime(dividends['caldt']).dt.date
     df = df.merge(dividends[['day', 'dividend']], on='day', how='left')
     df['dividend'] = df['dividend'].fillna(0)  # Fill missing dividend data with 0.
+
+    # Calculate average daily volume over past 14 days
+    daily_volume = df.groupby('day')['volume'].sum()
+    adv = daily_volume.rolling(14).mean().shift(1)
+    df["adv"] = df["day"].map(adv)
+            
+    # Daily close to close returns
+    daily_close = df.groupby("day")["close"].last()
+    daily_return = daily_close.pct_change()
+    sigma = (daily_return.rolling(window=14, min_periods=14).std().shift(1))
+    df["impact_sigma"] = df["day"].map(sigma)
             
     return df
 
