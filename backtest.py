@@ -15,7 +15,8 @@ MODE = int(os.getenv("MODE"))
 # MODE = 2 for different enter strategy and potential look ahead fix, and different checking strategy (check every 30 days, buy after 1 min, allow 1st min check/trade)
 # MODE 0 and 1 check min before every 30 min interval to trade on the interval 
 MODEL_MODE = int(os.getenv("MODEL_MODE"))
-SLIPPAGE = os.getenv("SLIPPAGE") == 'True'  # Convert to boolean
+IMPACT = os.getenv("IMPACT") == 'True'  # Convert to boolean
+ONLY_SLIPPAGE = os.getenv("ONLY_SLIPPAGE") == 'True'
 NEXT_OPEN = os.getenv("NEXT_OPEN") == 'True'
 
 # Constants and settings
@@ -79,6 +80,11 @@ def report_return_stream(name, rets, spy_rets):
         "Skew": rets.skew(),
         "Max Drawdown": max_drawdown_from_aum(aum),
     }
+
+def impact (shares, adv, sigma):
+    slippage_rate=1/10000
+    if ONLY_SLIPPAGE: return slippage_rate
+    return slippage_rate + (0.7 * sigma * np.sqrt(shares / adv))
 
 def main():
     # Group data by day for faster access
@@ -278,8 +284,8 @@ def main():
                 exit_price = price
                 enter_price = price 
                 if prev_hold != 0:
-                    if SLIPPAGE:
-                        exit_price *= (1 - slippage_rate * prev_hold)
+                    if IMPACT:
+                        exit_price *= 1 - prev_hold * impact(shares, current_day_data['adv'].iloc[0], current_day_data["impact_sigma"].iloc[0])
                     
                     #sigma open involves the close price of current min so we must take action next minute
                     gross_pnl += (exit_price - enter) * shares * prev_hold
@@ -291,8 +297,8 @@ def main():
                         trades_count_short+=2
                 
                 if exposure[i]!=0:
-                    if SLIPPAGE:
-                        enter_price *= (1 + slippage_rate * exposure[i])
+                    if IMPACT:
+                        enter_price *= 1 + exposure[i] * impact(shares, current_day_data['adv'].iloc[0], current_day_data["impact_sigma"].iloc[0])
                     
                     enter = enter_price
                 else:
