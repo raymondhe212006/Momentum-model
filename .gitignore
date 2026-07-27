@@ -20,3 +20,4 @@ build/
 
 # Output files
 *.png
+!avg_trading_day.png

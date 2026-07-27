@@ -6,6 +6,12 @@ A single-instrument (SPY) intraday momentum backtest built on minute-bar data fr
 
 The strategy computes upper and lower bands around each day's open price using a rolling intraday volatility estimate (`sigma_open`). At each 30-minute check interval, it enters long if price is above the upper band and above VWAP, short if price is below the lower band and below VWAP, and otherwise stays flat. Position sizing scales to a daily volatility target. Execution cost is modeled with a square-root market impact function.
 
+### Average trading day (2007-05-23)
+
+![Average trading day](avg_trading_day.png)
+
+Price (blue) breaks above the upper band (green dashed) and VWAP (orange) early in the session, triggering two long entries (▲) and exits (✕) as price retreats back through the band. The lower band (red dashed) is never touched, so no short positions are taken.
+
 ## Quick Start
 
 ```bash
