@@ -1,6 +1,9 @@
 # Secrets
 .env
 
+# Archived files
+backtestorg.py
+
 # Cached data
 Data_Import/data_cache/
 *.pkl
