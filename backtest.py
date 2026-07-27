@@ -9,12 +9,13 @@ import os
 from dotenv import load_dotenv
 load_dotenv()
 # 0 for original, 1 for impl
-MODE = int(os.getenv("MODE"))
-# MODE = 0 to match original with impl logic
-# MODE = 1 for different enter strategy and potential look ahead fix
+MODEL_MODE = int(os.getenv("MODEL_MODE"))
+
+# MODE = 0 to match original with impl logic, MODE = 1 for different enter strategy and potential look ahead fix
 # MODE = 2 for different enter strategy and potential look ahead fix, and different checking strategy (check every 30 days, buy after 1 min, allow 1st min check/trade)
 # MODE 0 and 1 check min before every 30 min interval to trade on the interval 
-MODEL_MODE = int(os.getenv("MODEL_MODE"))
+MODE = int(os.getenv("MODE"))
+
 IMPACT = os.getenv("IMPACT") == 'True'  # Convert to boolean
 ONLY_SLIPPAGE = os.getenv("ONLY_SLIPPAGE") == 'True'
 NEXT_OPEN = os.getenv("NEXT_OPEN") == 'True'
@@ -30,65 +31,19 @@ sizing_type = "vol_target"
 target_vol = 0.02
 max_leverage = 4
 day=200
-
 slippage_rate = 1/10000
-overlay_ratios = [0.0, 0.1, 0.25, 0.5, 0.75, 1.0]
 
+def impact (shares, adv, sigma, slip_rate):
+    if ONLY_SLIPPAGE: return slip_rate
+    if pd.isna(adv) or adv <= 0: return slip_rate
+    # sigma / 390 for volume by min
+    return slip_rate + (0.7 * (sigma/np.sqrt(390)) * np.sqrt(abs(shares) / adv))
 
-def max_drawdown_from_aum(aum):
-    running_peak = aum.cummax()
-    drawdown = aum / running_peak - 1
-    return drawdown.min()
-
-
-def report_leg(name, df, spy_rets, aum_col="AUM", ret_col="ret"):
-    rets = df[ret_col].dropna()
-    
-    aligned = pd.concat([rets, spy_rets], axis=1).dropna()
-    aligned.columns = ["leg", "spy"]
-
-    final_aum = df[aum_col].iloc[-1]
-    total_return = final_aum / AUM_0 - 1
-
-    sharpe = rets.mean() / rets.std() * np.sqrt(252) if rets.std() != 0 else np.nan
-    beta = aligned["leg"].cov(aligned["spy"]) / aligned["spy"].var()
-    skew = rets.skew()
-    max_dd = max_drawdown_from_aum(df[aum_col].dropna())
-
-    return {
-        "Leg": name,
-        "Final AUM": final_aum,
-        "Total Return": total_return,
-        "Sharpe": sharpe,
-        "Beta": beta,
-        "Skew": skew,
-        "Max Drawdown": max_dd,
-    }
-
-
-def report_return_stream(name, rets, spy_rets):
-    aligned = pd.concat([rets, spy_rets], axis=1).dropna()
-    aligned.columns = ["portfolio", "spy"]
-
-    aum = AUM_0 * (1 + rets.fillna(0)).cumprod()
-
-    return {
-        "Portfolio": name,
-        "Total Return": aum.iloc[-1] / AUM_0 - 1,
-        "Sharpe": rets.mean() / rets.std() * np.sqrt(252),
-        "Beta": aligned["portfolio"].cov(aligned["spy"]) / aligned["spy"].var(),
-        "Skew": rets.skew(),
-        "Max Drawdown": max_drawdown_from_aum(aum),
-    }
-
-def impact (shares, adv, sigma):
-    slippage_rate=1/10000
-    if ONLY_SLIPPAGE: return slippage_rate
-    return slippage_rate + (0.7 * sigma * np.sqrt(shares / adv))
-
-def main():
-    # Group data by day for faster access
+def backtest(aum, slippage_rate, display):
+    #Change for absolute original
     df = model(MODEL_MODE)
+
+    # Group data by day for faster access
     all_days = df['day'].unique()
 
     # Group data by day for faster access
@@ -97,22 +52,21 @@ def main():
     # Initialize strategy DataFrame using unique days
     strat = pd.DataFrame(index=all_days)
     strat['ret'] = np.nan
-    strat['AUM'] = AUM_0
+    strat['AUM'] = aum
     strat['ret_spy'] = np.nan
 
     # Initialize long vs short DataFrames
     strat_long = pd.DataFrame(index=all_days)
     strat_long['ret'] = np.nan
-    strat_long['AUM'] = AUM_0
+    strat_long['AUM'] = aum
 
     strat_short= pd.DataFrame(index=all_days)
     strat_short['ret'] = np.nan
-    strat_short['AUM'] = AUM_0
+    strat_short['AUM'] = aum
 
     # Calculate daily returns for SPY using the closing prices
     with open("Data_Import/data_cache/SPY_2024-06-24_2026-06-19_day.pkl", "rb") as f:
-        spy_daily_data = pickle.load(f) 
-
+        spy_daily_data = pickle.load(f)
     df_daily = pd.DataFrame(spy_daily_data)
     df_daily['caldt'] = pd.to_datetime(df_daily['caldt']).dt.date
     df_daily.set_index('caldt', inplace=True)  # Set the datetime column as the DataFrame index for easy time series manipulation.
@@ -131,7 +85,7 @@ def main():
         if not(prev_day in daily_groups.groups and current_day in daily_groups.groups):
             continue
 
-        #skip 1st 14 days
+        #skip 1st 14/15 days
         if 'sigma_open' in current_day_data.columns and current_day_data['sigma_open'].isna().all():
             continue
         
@@ -247,8 +201,7 @@ def main():
 
         
         # --------------------------------------------- NOTICE ---------------------------------------------
-        # TRADE STRAIGHT AWAY (NO DELAY) and match ORIGINAL MODEL OR TRADE ON NEXT MIN OPEN
-        # This induces look ahead bias? since machine takes time to calculate signals so we should only trade minute after
+        # TRADE STRAIGHT AWAY (SAME MIN AS DETECTION) and match ORIGINAL MODEL OR TRADE ON NEXT MIN OPEN
         shift = 0
         if NEXT_OPEN:
             shift = 1
@@ -265,8 +218,6 @@ def main():
                 if exposure[i-1] != 0 and exposure[i] !=0: # need two trades for selling a long then buying a short on same minute
                     trades_count+=1
                 trades_count += 1
-
-        
 
         # Calculate PnL
         prev_hold=0
@@ -285,7 +236,11 @@ def main():
                 enter_price = price 
                 if prev_hold != 0:
                     if IMPACT:
-                        exit_price *= 1 - prev_hold * impact(shares, current_day_data['adv'].iloc[0], current_day_data["impact_sigma"].iloc[0])
+                        # actual volume
+                        execution_volume = current_day_data["volume"].iloc[i]
+                        # predict volume (whole day)
+                        # execution_volume = current_day_data['adv'].iloc[0]
+                        exit_price *= 1 - prev_hold * impact(shares, execution_volume, current_day_data["impact_sigma"].iloc[0], slippage_rate)
                     
                     #sigma open involves the close price of current min so we must take action next minute
                     gross_pnl += (exit_price - enter) * shares * prev_hold
@@ -298,7 +253,11 @@ def main():
                 
                 if exposure[i]!=0:
                     if IMPACT:
-                        enter_price *= 1 + exposure[i] * impact(shares, current_day_data['adv'].iloc[0], current_day_data["impact_sigma"].iloc[0])
+                        # actual volume
+                        execution_volume = current_day_data["volume"].iloc[i]
+                        # predict volume (whole day)
+                        # execution_volume = current_day_data['adv'].iloc[0]
+                        enter_price *= 1 + exposure[i] * impact(shares, execution_volume, current_day_data["impact_sigma"].iloc[0], slippage_rate)
                     
                     enter = enter_price
                 else:
@@ -308,11 +267,11 @@ def main():
 
         # sanity checks
         if not(np.isclose(gross_pnl_long+gross_pnl_short,gross_pnl)):
-            print("uneven gross pnl")
+            print("uneven gross pnl");
             print(gross_pnl_long+gross_pnl_short)
             print(gross_pnl)
         if trades_count_long+trades_count_short != trades_count:
-            print("uneven trade count")
+            print("uneven trade count");
             print(trades_count_long+trades_count_short)
             print(trades_count)
 
@@ -348,16 +307,15 @@ def main():
         strat_short.loc[current_day, 'AUM'] = previous_aum_short + net_pnl_short
         strat_short.loc[current_day, 'ret'] = net_pnl_short / previous_aum
 
-        if not(np.isclose(strat_long.loc[current_day, 'AUM']+strat_short.loc[current_day, 'AUM']-AUM_0, strat.loc[current_day, 'AUM'])):
+        if not(np.isclose(strat_long.loc[current_day, 'AUM']+strat_short.loc[current_day, 'AUM']-aum, strat.loc[current_day, 'AUM'])):
             print("uneven aum")
-            print(strat_long.loc[current_day, 'AUM']+strat_short.loc[current_day, 'AUM']-AUM_0)
+            print(strat_long.loc[current_day, 'AUM']+strat_short.loc[current_day, 'AUM']-aum)
             print(strat.loc[current_day, 'AUM'])
 
         # Save the passive Buy&Hold daily return for SPY
         strat.loc[current_day, 'ret_spy'] = df_daily.loc[df_daily.index == current_day, 'ret'].values[0]
 
-        if d == day:
-            # print(exposure)
+        if d == day and display:
             mins       = current_day_data["min_from_open"].values
             close_vals = current_close_prices.values
             fig, ax = plt.subplots(figsize=(12, 5))
@@ -399,236 +357,8 @@ def main():
             ax.legend(fontsize=8)
             ax.grid(True, alpha=0.3)
             plt.tight_layout()
-            #plt.show()
+            plt.show()
+        
 
-
-
-    # Results
-    spy_rets = strat["ret_spy"].dropna()
-
-    results = pd.DataFrame([
-        report_leg("Combined", strat, spy_rets),
-        report_leg("Long Leg", strat_long, spy_rets),
-        report_leg("Short Leg", strat_short, spy_rets),
-    ])
-
-    print(results.to_string(index=False))
-
-    long_leg_aum=results.loc[results["Leg"] == "Long Leg", "Final AUM"].iloc[0]
-    short_leg_aum=results.loc[results["Leg"] == "Short Leg", "Final AUM"].iloc[0]
-    combined_aum=results.loc[results["Leg"] == "Combined", "Final AUM"].iloc[0]
-
-    if np.isclose(long_leg_aum+short_leg_aum-AUM_0, combined_aum):
-        print("Pass")
-
-    
-    # Worse ten days
-    print("\nWorse 10 SPY days\n")
-    stress = pd.concat([
-        strat["ret_spy"],
-        strat["ret"],
-        strat_long["ret"],
-        strat_short["ret"],
-    ], axis=1).dropna()
-
-    stress.columns = ["SPY", "Combined", "Long Leg", "Short Leg"]
-
-    worst_10_spy_days = stress.sort_values("SPY").head(10)
-
-    print(worst_10_spy_days)
-
-    print("\nWorst 10 SPY days average:")
-    print(worst_10_spy_days.mean())
-    print("\nShort leg hit rate during worst 10 SPY days:")
-    print((worst_10_spy_days["Short Leg"] > 0).mean())
-
-    
-    print("\nShort Overlay\n")
-    # Build aligned SPY + short-leg return data once
-    overlay = pd.concat([
-        strat["ret_spy"],
-        strat_short["ret"],
-    ], axis=1).dropna()
-
-    overlay.columns = ["SPY", "Short Overlay"]
-
-    # Worst 10 SPY days
-    worst_days = overlay["SPY"].nsmallest(10).index
-
-    # Define calm days as the middle 80% of SPY daily returns
-    low = overlay["SPY"].quantile(0.10)
-    high = overlay["SPY"].quantile(0.90)
-    calm_mask = overlay["SPY"].between(low, high)
-
-
-    def report_return_stream(name, rets, spy_rets):
-        aligned = pd.concat([rets, spy_rets], axis=1).dropna()
-        aligned.columns = ["portfolio", "spy"]
-
-        portfolio = aligned["portfolio"]
-        spy = aligned["spy"]
-
-        aum = AUM_0 * (1 + portfolio).cumprod()
-
-        return {
-            "Portfolio": name,
-            "Total Return": aum.iloc[-1] / AUM_0 - 1,
-            "Sharpe": portfolio.mean() / portfolio.std() * np.sqrt(252),
-            "Beta": portfolio.cov(spy) / spy.var(),
-            "Skew": portfolio.skew(),
-            "Max Drawdown": max_drawdown_from_aum(aum),
-        }
-
-
-    rows = []
-
-    for overlay_ratio in overlay_ratios:
-        combo_rets = (
-            overlay["SPY"]
-            + overlay_ratio * overlay["Short Overlay"]
-        )
-
-        metrics = report_return_stream(
-            f"SPY + {overlay_ratio}x Short Overlay",
-            combo_rets,
-            overlay["SPY"],
-        )
-
-        spy_worst_avg = overlay.loc[worst_days, "SPY"].mean()
-        combo_worst_avg = combo_rets.loc[worst_days].mean()
-
-        calm_drag = (
-            overlay_ratio
-            * overlay.loc[calm_mask, "Short Overlay"].mean()
-        )
-
-        rows.append({
-            **metrics,
-            "Overlay Ratio": overlay_ratio,
-            "Gross Exposure": 1 + overlay_ratio,
-            "Worst 10 Avg Return": combo_worst_avg,
-            "Worst 10 Improvement": combo_worst_avg - spy_worst_avg,
-            "Calm Period Drag": calm_drag,
-        })
-
-
-    overlay_results = pd.DataFrame(rows)
-
-    # Baseline is the 0.0x overlay row
-    baseline_beta = overlay_results.loc[
-        overlay_results["Overlay Ratio"] == 0,
-        "Beta"
-    ].iloc[0]
-
-    baseline_dd = overlay_results.loc[
-        overlay_results["Overlay Ratio"] == 0,
-        "Max Drawdown"
-    ].iloc[0]
-
-    overlay_results["Beta Reduction"] = (
-        baseline_beta - overlay_results["Beta"]
-    )
-
-    overlay_results["Drawdown Relief"] = (
-        overlay_results["Max Drawdown"] - baseline_dd
-    )
-
-    overlay_results["Beta Reduction per 1.0x"] = np.where(
-        overlay_results["Overlay Ratio"] > 0,
-        overlay_results["Beta Reduction"]
-        / overlay_results["Overlay Ratio"],
-        np.nan,
-    )
-
-    overlay_results["DD Relief per 1.0x"] = np.where(
-        overlay_results["Overlay Ratio"] > 0,
-        overlay_results["Drawdown Relief"]
-        / overlay_results["Overlay Ratio"],
-        np.nan,
-    )
-
-
-    # Format output
-    overlay_display = overlay_results.copy()
-
-    percent_cols = [
-        "Total Return",
-        "Max Drawdown",
-        "Worst 10 Avg Return",
-        "Worst 10 Improvement",
-        "Calm Period Drag",
-        "Drawdown Relief",
-        "DD Relief per 1.0x",
-    ]
-
-    for col in percent_cols:
-        overlay_display[col] = overlay_display[col].map(
-            lambda x: "" if pd.isna(x) else f"{x:.2%}"
-        )
-
-    decimal_cols = [
-        "Sharpe",
-        "Beta",
-        "Skew",
-        "Gross Exposure",
-        "Beta Reduction",
-        "Beta Reduction per 1.0x",
-    ]
-
-    for col in decimal_cols:
-        overlay_display[col] = overlay_display[col].map(
-            lambda x: "" if pd.isna(x) else f"{x:.3f}"
-        )
-
-    overlay_display = overlay_display.drop(columns=["Overlay Ratio", "Gross Exposure"])
-
-    overlay_display = overlay_display.rename(columns={
-        "Total Return": "Return",
-        "Max Drawdown": "Max DD",
-        "Worst 10 Avg Return": "Worst 10 Avg",
-        "Worst 10 Improvement": "Worst 10 Help",
-        "Calm Period Drag": "Calm Drag",
-        "Beta Reduction": "Beta Red.",
-        "Drawdown Relief": "DD Relief",
-        "Beta Reduction per 1.0x": "Beta Red./x",
-        "DD Relief per 1.0x": "DD Relief/x",
-    })
-
-    print(overlay_display.to_string(index=False))
-
-
-    # Equity curve
-    strat_aum   = strat['AUM']
-    spy_aum     = AUM_0 * (1 + strat['ret_spy'].fillna(0)).cumprod()
-    days        = strat.index
-
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(13, 8),
-                                   gridspec_kw={'height_ratios': [3, 1]})
-
-    ax1.plot(days, strat_aum.values, label='Strategy', color='steelblue', linewidth=1.5)
-    ax1.plot(days, spy_aum.values,   label='SPY Buy & Hold', color='darkorange',
-             linestyle='--', linewidth=1.5)
-    ax1.set_title('Equity Curve', fontsize=13)
-    ax1.set_ylabel('AUM ($)')
-    ax1.legend()
-    ax1.grid(True, alpha=0.3)
-    ax1.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    ax1.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-
-    strat_rets = strat['ret'].dropna()
-    colors = ['steelblue' if r >= 0 else 'tomato' for r in strat_rets.values]
-    ax2.bar(strat_rets.index, strat_rets.values, color=colors, width=1)
-    ax2.axhline(0, color='black', linewidth=0.7)
-    ax2.set_title('Daily Returns', fontsize=11)
-    ax2.set_ylabel('Return')
-    ax2.grid(True, alpha=0.3)
-    ax2.xaxis.set_major_formatter(mdates.DateFormatter('%Y-%m'))
-    ax2.xaxis.set_major_locator(mdates.MonthLocator(interval=3))
-
-    plt.tight_layout()
-    plt.savefig('equity_curve.png', dpi=150, bbox_inches='tight')
-    #plt.show()
-
-
-if __name__ == "__main__":
-    exit(main())
+    print("finished")
+    return (strat, strat_long, strat_short)
