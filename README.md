@@ -130,21 +130,27 @@ Results were swept across three AUM levels and nine slippage rates (flat floor i
 
 ### Strategy performance vs. slippage (combined leg, MODE=0)
 
+0.28 bps is the empirical average half-spread for SPY and is used as the realistic baseline.
+
 | AUM | Slippage (bps) | Total Return | Sharpe | Beta | Max DD |
 |---|---|---|---|---|---|
 | $100K | 0.10 | +517% | 0.81 | -0.07 | -31.8% |
 | $100K | 0.20 | +420% | 0.74 | -0.07 | -33.8% |
+| **$100K** | **0.28 ✦** | **+356%** | **0.69** | **-0.07** | **-35.3%** |
 | $100K | 0.50 | +209% | 0.53 | -0.07 | -39.6% |
 | $100K | 0.75 | +99% | 0.35 | -0.07 | -49.5% |
 | $100K | 1.00 | +28% | 0.17 | -0.07 | -60.5% |
 | $100K | 1.50 | -48% | -0.19 | -0.07 | -76.9% |
 | $1M | 0.10 | +183% | 0.49 | -0.07 | -39.1% |
+| **$1M** | **0.28 ✦** | **+119%** | **0.39** | **-0.07** | **-46.5%** |
 | $1M | 0.50 | +57% | 0.25 | -0.07 | -55.9% |
 | $1M | 0.75 | +6% | 0.10 | -0.07 | -64.6% |
 | $1M | 1.00 | -28% | -0.06 | -0.07 | -72.0% |
 | $5M | 0.10 | +13% | 0.12 | -0.07 | -63.7% |
-| $5M | 0.20 | -36% | -0.08 | -0.07 | -66.4% |
+| **$5M** | **0.28 ✦** | **-10%** | **0.03** | **-0.07** | **-68.4%** |
 | $5M | 0.50 | -32% | -0.08 | -0.07 | -73.7% |
+
+✦ Realistic baseline — empirical average half-spread for SPY.
 
 ### Capacity and break-even slippage
 
@@ -158,28 +164,28 @@ The strategy is highly capacity-constrained. Market impact dominates at larger s
 
 At $5M the strategy is already near-breakeven at the minimum tested slippage (0.10 bps), meaning market impact alone is nearly sufficient to erase alpha. Viable deployment size is likely well under $5M.
 
-### Long vs. short leg breakdown (at $100K, 0.10 bps)
+### Long vs. short leg breakdown (at $100K, realistic 0.28 bps)
 
 | Leg | Total Return | Sharpe | Beta | Max DD |
 |---|---|---|---|---|
-| Combined | +517% | 0.81 | -0.07 | -31.8% |
-| Long | +338% | 0.81 | +0.11 | -15.6% |
-| Short | +179% | 0.42 | -0.18 | -51.7% |
+| Combined | +356% | 0.69 | -0.07 | -35.3% |
+| Long | +242% | 0.70 | +0.11 | -15.2% |
+| Short | +114% | 0.35 | -0.18 | -52.9% |
 
 The long leg drives most of the alpha and has a much lower drawdown. The short leg is profitable at low cost but is significantly more volatile and carries a larger max drawdown.
 
 ### Short leg as a SPY hedge (overlay analysis)
 
-Adding the short leg's return stream on top of a SPY buy-and-hold position at various weights reduces beta and improves the worst-10-day average with minimal calm-period drag. Results at $100K, 0.10 bps:
+Adding the short leg's return stream on top of a SPY buy-and-hold position at various weights reduces beta and improves the worst-10-day average with minimal calm-period drag. Results at $100K, realistic 0.28 bps:
 
 | Overlay | SPY + Short | Sharpe | Beta | Max DD | Worst 10 Avg | Worst 10 Improvement | Calm Drag |
 |---|---|---|---|---|---|---|---|
 | 0.0x | +229% | 0.45 | 1.00 | -56.4% | -7.89% | — | — |
-| 0.25x | +315% | 0.53 | 0.96 | -51.8% | -7.55% | +0.34% | -0.02% |
-| 0.50x | +416% | 0.61 | 0.91 | -46.8% | -7.22% | +0.67% | -0.05% |
-| 1.00x | +663% | 0.70 | 0.82 | -38.5% | -6.54% | +1.35% | -0.10% |
+| 0.25x | +300% | 0.52 | 0.96 | -51.9% | -7.55% | +0.34% | -0.02% |
+| 0.50x | +378% | 0.58 | 0.91 | -47.0% | -7.22% | +0.67% | -0.05% |
+| 1.00x | +556% | 0.66 | 0.82 | -38.7% | -6.54% | +1.35% | -0.10% |
 
-Beta reduction is approximately **0.18 per 1× overlay** and is consistent across slippage levels at $100K. The hedge effect deteriorates at $5M where the short leg itself turns negative.
+Beta reduction is approximately **0.18 per 1× overlay** and is consistent across slippage levels at $100K. The hedge effect deteriorates at $5M where the short leg itself turns negative at realistic slippage.
 
 ---
 
