@@ -123,7 +123,7 @@ Running `python results.py` prints a performance table for the combined strategy
 
 ## Backtest Results
 
-**Period:** June 2024 – June 2026 (~2 years)  
+**Period:** May 2007 – April 2024 (~17 years, `start=2007-05-01`, `end=2024-05-01` exclusive)  
 **SPY benchmark:** +228.71% buy-and-hold over this period
 
 Results were swept across three AUM levels and nine slippage rates (flat floor input to the square-root impact model). Effective cost per trade grows with AUM because the market impact term scales with share size relative to ADV.
